@@ -1,6 +1,8 @@
-/* Main; all the work is done in other modules.
+/* File: ADDAmain.c
+ * $Date::                            $
+ * Descr: main; all the work is done in other modules.
  *
- * Copyright (C) ADDA contributors
+ * Copyright (C) 2006-2013 ADDA contributors
  * This file is part of ADDA.
  *
  * ADDA is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as
@@ -55,7 +57,8 @@ void PrintInfo(void);
 
 //======================================================================================================================
 
-int main(int argc,char **argv)
+//int main(int argc,char **argv)
+int main(int argc_cl, char **argv_cl)
 {
 	/* Pointer argv can be declared restrict here and in all calling functions. However, that would be hard to verify,
 	 * especially in newly-added functions for parsing command line option. Since the optimization gain is expected to
@@ -66,43 +69,127 @@ int main(int argc,char **argv)
 	_setmode(_fileno(stdout),_O_TEXT);
 	_setmode(_fileno(stderr),_O_TEXT);
 #endif
-	// Initialize error handling and line wrapping
-	logfile=NULL;
-	term_width=DEF_TERM_WIDTH;
-	// Start global time
-	StartTime();
-	// Initialize communications
-	InitComm(&argc,&argv);
-	// Initialize and parse input parameters
-	InitVariables();
-	ParseParameters(argc,argv);
-	D("Reading command line finished");
-	VariablesInterconnect(); // also initializes beam
-	// Initialize box's; get number of dipoles; set some variables
-	InitShape();
-	D("Initialization of shape finished");
-	FinalizeSymmetry(); // finalize symmetries and check for possible conflicts of symmetries with other options
-	// !!! before this line errors should be printed in simple format, after - in advanced one
-	// Create directory and start logfile (print command line)
-	DirectoryLog(argc,argv);
-	// Initialize FFT grid and its subdivision over processors
-	ParSetup();
-	// MakeParticle; initialize dpl and local_nRows
-	MakeParticle();
-	D("Make particle finished");
-	// Print info to stdout and logfile
-	PrintInfo();
-	// Main calculation part
-	D("Calculator started");
-	Calculator();
-	D("Calculator finished");
-	// Print timing and statistics; close logfile
-	FinalStatistics();
-	// check error on stdout
-	if (ferror(stdout))
-		LogWarning(EC_WARN,ALL_POS,"Some errors occurred while writing to stdout during the execution of ADDA");
-	// finish execution normally
-	Stop(EXIT_SUCCESS);
-	// never actually reached; just to make the compiler happy
+        //***************************************************************
+        // read in text file containing adda command line options
+        //***************************************************************
+        FILE * ftest;
+        char *fname;
+        int i = 0;
+
+        char line[512];
+        char *array[100];
+
+        // output file for each calculation index
+        char fname_cf[200];
+        FILE * calc_file;
+        int rank;
+         
+        fname = argv_cl[1];
+
+        // go line by line
+        ftest = fopen(fname, "r");
+        while (fgets(line, sizeof(line), ftest)) {
+            // parse line data into array
+            array[i] = strtok(line, " ");
+
+            while(array[i]!=NULL){
+                ++i;
+                array[i] = strtok(NULL, " ");
+            }
+
+            // get size of array and copy to new array
+            int argc = i;
+            char *argv_tmp[argc+2];
+            char **argv = &argv_tmp;
+            int j;
+            int calc_ind;
+            char *tail;
+            char *dir_out;
+            bool dir_found = false;
+
+            argv[0] = "./adda_mpi";
+
+            for(j=1; j<=argc; j++){
+                argv_tmp[j] = array[j-1];
+                //printf("%d %s\n", j, argv_tmp[j]);
+            }
+
+            //***************************************************************
+            // now run adda as normal but with artificial command line args
+            //***************************************************************
+
+	    // Initialize error handling and line wrapping
+	    logfile=NULL;
+	    term_width=DEF_TERM_WIDTH;
+	    // Start global time
+	    StartTime();
+            InitComm(&argc,&argv);
+
+	    // Initialize and parse input parameters
+	    InitVariables();
+	    ParseParameters(argc,argv);
+	    D("Reading command line finished");
+	    VariablesInterconnect(); // also initializes beam
+	    // Initialize box's; get number of dipoles; set some variables
+	    InitShape();
+	    D("Initialization of shape finished");
+	    FinalizeSymmetry(); // finalize symmetries and check for possible conflicts of symmetries with other options
+	    // !!! before this line errors should be printed in simple format, after - in advanced one
+	    // Create directory and start logfile (print command line)
+	    DirectoryLog(argc,argv);
+	    // Initialize FFT grid and its subdivision over processors
+	    ParSetup();
+	    // MakeParticle; initialize dpl and local_nRows
+	    MakeParticle();
+	    D("Make particle finished");
+	    // Print info to stdout and logfile
+	    PrintInfo();
+	    // Main calculation part
+	    D("Calculator started");
+	    Calculator();
+	    D("Calculator finished");
+	    // Print timing and statistics; close logfile
+	    FinalStatistics();
+	    // check error on stdout
+	    if (ferror(stdout))
+		    LogWarning(EC_WARN,ALL_POS,"Some errors occurred while writing to stdout during the execution of ADDA");
+	    // write calculation output completion to text file
+            MPI_Comm_rank(MPI_COMM_WORLD,&rank);
+            printf("rank: %d\n", rank);
+            if (rank==0){
+                // get output directory
+                for(j=1; j<=argc; j++){
+                    if(strcmp(argv_tmp[j],"-dir")==0){
+                        dir_out = argv_tmp[j+1];
+                        dir_found = true;
+                    }
+                }
+
+                if (dir_found==false){
+                    dir_out = "";
+                }
+
+                // open calc file to show completed calculations
+                sprintf(fname_cf, "%s/calc_complete.txt", dir_out);
+                calc_file = fopen(fname_cf, "a");
+
+                // make sure last argument is null; get calc index
+                argv_tmp[argc] = NULL;
+                calc_ind = strtol(strtok(array[argc-1], "\n"), &tail, 0);
+                printf("calculation index: %d\n", calc_ind);
+
+                // write to file
+                fprintf(calc_file, "%d\n", calc_ind);
+                fclose(calc_file);
+            }
+	    NextCalc(EXIT_SUCCESS);
+	    // never actually reached; just to make the compiler happy
+
+            //***************************************************************
+            // end of line-by-line loop of each adda run
+            //***************************************************************
+            i = 0;
+        }
+	StopFinal(EXIT_SUCCESS);
 	return 0;
 }
