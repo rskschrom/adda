@@ -1,9 +1,7 @@
-/* FILE : comm.c
- * $Date::                            $
- * Descr: incorporates all parallelization related code, so most of it is directly involved in or closely related to
- *        interprocess communication
+/* Incorporates all parallelization related code, so most of it is directly involved in or closely related to
+ * interprocess communication
  *
- * Copyright (C) 2006-2013 ADDA contributors
+ * Copyright (C) ADDA contributors
  * This file is part of ADDA.
  *
  * ADDA is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as
@@ -33,7 +31,7 @@
 #include <string.h>
 
 #ifdef ADDA_MPI
-MPI_Datatype mpi_dcomplex,mpi_int3,mpi_double3,mpi_dcomplex3;  // combined datatypes
+MPI_Datatype mpi_dcomplex,mpi_int3,mpi_double3,mpi_dcomplex3; // combined datatypes
 int *recvcounts,*displs; // arrays of size ringid required for AllGather operations
 bool displs_init=false;  // whether arrays above are initialized
 #endif
@@ -60,7 +58,7 @@ static int Ntrans;         // number of transmissions; used in CalcPartner
 static int * restrict gr_comm_size;  // sizes of transmissions for granule generator communications
 static int * restrict gr_comm_overl; // shows whether two sequential transmissions overlap
 static unsigned char * restrict gr_comm_ob; // buffer for overlaps
-static void * restrict gr_comm_buf;         // buffer for MPI transfers
+static bool * restrict gr_comm_buf;         // buffer for MPI transfers
 #endif // !SPARSE
 
 
@@ -153,10 +151,11 @@ static MPI_Datatype MPIVarType(var_type type,bool reduce,int *mult)
  * exact correspondence is possible. But when reduce operations are used ('reduce'=true), only built-in datatypes can be
  * directly used. In this case we emulate more complex datatypes through multiplication of double, and additional
  * variable 'mult' is returned to account for this factor.
+ *
+ * Reduction of complex numbers is emulated if not supported; C99 implies that this emulation is portable. Anyway, it
+ * is only used for old (less modern) MPI implementations.
  */
 {
-	//MPI_Datatype res;
-
 	if (reduce) *mult=1; // default value when direct correspondence is possible
 	switch (type) {
 		case uchar_type: return MPI_UNSIGNED_CHAR;
@@ -164,11 +163,14 @@ static MPI_Datatype MPIVarType(var_type type,bool reduce,int *mult)
 		case sizet_type: return MPI_SIZE_T;
 		case double_type: return MPI_DOUBLE;
 		case cmplx_type:
+#ifndef SUPPORT_MPI_COMPLEX_REDUCE
 			if (reduce) {
 				*mult=2;
 				return MPI_DOUBLE;
 			}
-			else return mpi_dcomplex;
+			else
+#endif
+			return mpi_dcomplex;
 		case int3_type:
 			if (reduce) {
 				*mult=3;
@@ -183,8 +185,13 @@ static MPI_Datatype MPIVarType(var_type type,bool reduce,int *mult)
 			else return mpi_double3;
 		case cmplx3_type:
 			if (reduce) {
+#ifdef SUPPORT_MPI_COMPLEX_REDUCE
+				*mult=3;
+				return mpi_dcomplex;
+#else
 				*mult=6;
 				return MPI_DOUBLE;
+#endif
 			}
 			else return mpi_dcomplex3;
 	}
@@ -248,8 +255,6 @@ void InitComm(int *argc_p UOIP,char ***argv_p UOIP)
 {
 #ifdef ADDA_MPI
 	int ver,subver;
-        int j;
-        int initialized;
 
 	/* MPI_Init may alter argc and argv and interfere with normal parsing of command line parameters. The way of
 	 * altering is implementation depending. MPI searches for MPI parameters in the command line and removes them (we
@@ -258,18 +263,9 @@ void InitComm(int *argc_p UOIP,char ***argv_p UOIP)
 	 * MPICH 1.2.5, for example, just replaces corresponding parameters by NULLs. To incorporate it we introduce special
 	 * function to restore the command line
 	 */
-        //printf("Number of arguments: %d \n", argc_p);
-        //for(j=0; j<argc_p; j++){
-        //    printf("%d %s\n", j, argv_p[j]);
-        //}
-
-        MPI_Initialized(&initialized);
-        if (!initialized){
-	    MPI_Init(&argc_p,&argv_p);
-        }
+	MPI_Init(argc_p,argv_p);
 	tstart_main = GET_TIME(); // initialize program time
 	RecoverCommandLine(argc_p,argv_p);
-
 	// initialize ringid and nprocs
 	MPI_Comm_rank(MPI_COMM_WORLD,&ringid);
 	MPI_Comm_size(MPI_COMM_WORLD,&nprocs);
@@ -279,11 +275,12 @@ void InitComm(int *argc_p UOIP,char ***argv_p UOIP)
 	else Ntrans=nprocs;
 #endif
 	// define a few derived datatypes
-	/* this is intimately tied to the type definition of doublecomplex; when switching to C99 complex datatypes, this
-	 * should be replaced just by MPI_DOUBLE_COMPLEX.
-	 */
+#ifdef SUPPORT_MPI_COMPLEX
+	mpi_dcomplex = MPI_C_DOUBLE_COMPLEX; // use built-in datatype if supported
+#else
 	MPI_Type_contiguous(2,MPI_DOUBLE,&mpi_dcomplex);
 	MPI_Type_commit(&mpi_dcomplex);
+#endif
 	MPI_Type_contiguous(3,MPI_INT,&mpi_int3);
 	MPI_Type_commit(&mpi_int3);
 	MPI_Type_contiguous(3,MPI_DOUBLE,&mpi_double3);
@@ -292,8 +289,38 @@ void InitComm(int *argc_p UOIP,char ***argv_p UOIP)
 	MPI_Type_commit(&mpi_dcomplex3);
 	// check MPI version at runtime
 	MPI_Get_version(&ver,&subver);
-	if ((ver<MPI_VER_REQ) || ((ver==MPI_VER_REQ) && (subver<MPI_SUBVER_REQ))) LogError(ONE_POS,
-		"MPI version (%d.%d) is too old. Version %d.%d or newer is required",ver,subver,MPI_VER_REQ,MPI_SUBVER_REQ);
+	D("MPI library version: %d.%d",ver,subver);
+	/* Microsoft MPI claims to support most of the MPI 2.2 features (and even some of 3.1), but declares only 2.0, see
+	 * https://github.com/microsoft/Microsoft-MPI/issues/15 . We, thus, use the following hack to assume its support for
+	 * MPI 2.2. However, it is not perfect, if different vendor libraries are used at compile and runtime:
+	 * - compiling with MS_MPI and further linking with another library (conforming to MPI 2.0 or 2.1), the hack is too
+	 *   optimistic, and may cause further problems during execution.
+	 * - compiling with another library and further linking with MS_MPI, the hack is skipped and execution fails,
+	 *   although it may have worked.
+	 * However, such cross usage is unlikely because there are not many MPI implementations for Windows, and even the
+	 * main library file for MS_MPI is named differently (msmpi.lib).
+	 * To get more confidence, we can use MPI_Get_library_version(), but this will cause complete failure for some
+	 * older libraries that support MPI 2.2, but do not have this 3.0 function.
+	 */
+#ifdef MSMPI_VER
+	if (ver==2 && subver<2) {
+		D("But we assume that this is Microsoft MPI library that supports MPI 2.2");
+		subver=2;
+	}
+#endif
+	if (!GREATER_EQ2(ver,subver,RUN_MPI_VER_REQ,RUN_MPI_SUBVER_REQ)) {
+		if (GREATER_EQ2(ver,subver,MPI_VER_REQ,MPI_SUBVER_REQ)) // library fits into minimum requirements
+			LogError(ONE_POS,"MPI library version (%d.%d) is too old for current ADDA executable. Version %d.%d or "
+				"newer is required. Alternatively, you may recompile ADDA using this version of the library.",
+				ver,subver,RUN_MPI_VER_REQ,RUN_MPI_SUBVER_REQ);
+		else if (RUN_MPI_VER_REQ==MPI_VER_REQ && RUN_MPI_SUBVER_REQ==MPI_SUBVER_REQ) // executable requires minimum
+			LogError(ONE_POS,"MPI library version (%d.%d) is too old. Version %d.%d or newer is required",
+				ver,subver,RUN_MPI_VER_REQ,RUN_MPI_SUBVER_REQ);
+		else // two upgrade options
+			LogError(ONE_POS,"MPI library version (%d.%d) is too old. Version %d.%d or newer is required for the "
+				"current ADDA executable or at least %d.%d, if ADDA is recompiled using such library.",
+				ver,subver,RUN_MPI_VER_REQ,RUN_MPI_SUBVER_REQ,MPI_VER_REQ,MPI_SUBVER_REQ);
+	}
 	// if MPI crashes, it happens here
 	Synchronize();
 #elif !defined(PARALLEL)
@@ -314,14 +341,16 @@ void Stop(const int code)
 {
 #ifdef ADDA_MPI
 	if (code!=EXIT_SUCCESS) { // error occurred
-		fflush(stdout);
+		fflush(NULL);
 		fprintf(stderr,"Aborting process %d\n",ringid);
-		fflush(stderr);
 		MPI_Abort(MPI_COMM_WORLD,code);
 	}
 	else { // regular termination
 		// clean MPI constructs and some memory
+#ifndef SUPPORT_MPI_COMPLEX
 		MPI_Type_free(&mpi_dcomplex);
+#endif
+		MPI_Type_free(&mpi_int3);
 		MPI_Type_free(&mpi_double3);
 		MPI_Type_free(&mpi_dcomplex3);
 		if (displs_init) {
@@ -329,7 +358,7 @@ void Stop(const int code)
 			Free_general(displs);
 		}
 		// wait for all processors
-		fflush(stdout);
+		fflush(NULL);
 		Synchronize();
 		// finalize MPI communications
 		MPI_Finalize();
@@ -361,9 +390,6 @@ void StopFinal(const int code)
 	exit(code);
 }
 
-//========================================================================================================
-
-
 //===================================================================================================
 
 void NextCalc(const int code)
@@ -392,6 +418,7 @@ void NextCalc(const int code)
 #endif
 }
 
+
 //======================================================================================================================
 
 void Synchronize(void)
@@ -404,8 +431,7 @@ void Synchronize(void)
 
 //======================================================================================================================
 
-void MyBcast(void * restrict data UOIP,const var_type type UOIP,const size_t n_elem UOIP,
-	TIME_TYPE *timing UOIP)
+void MyBcast(void * restrict data UOIP,const var_type type UOIP,const size_t n_elem UOIP,TIME_TYPE *timing UOIP)
 /* casts values stored in '*data' from root processor to all other; works for all types;
  * increments 'timing' (if not NULL) by the time used
  */
@@ -467,15 +493,13 @@ double AccumulateMax(double data UOIP,double *max UOIP)
 
 //======================================================================================================================
 
-void Accumulate(double * restrict vector UOIP,const size_t n UOIP,double * restrict buf UOIP,TIME_TYPE *timing UOIP)
-/* Gather and add double vector on processor root; total time is saved in timing (NOT incremented). Passing
- * doublecomplex vector as first argument (with appropriate cast) may cause warnings using some compilers (possible
- * problems with strict aliasing rules. While these particular warnings can be easily fixed (e.g. by defining argument
- * as void *), the root of the problem lies in lack of native support of complex types in MPI_Reduce. Currently this
- * support is emulated through doubles and may potentially cause problems with aliasing.
- */
+void Accumulate(void * restrict data UOIP,const var_type type UOIP,size_t n UOIP,TIME_TYPE *timing UOIP)
+// Gather and add complex vector on processor root; total time is saved in timing (NOT incremented).
+// Can be easily made to accept any variable type
 {
 #ifdef ADDA_MPI
+	MPI_Datatype mes_type;
+	int mult;
 	TIME_TYPE tstart;
 
 	if (n>INT_MAX) LogError(ONE_POS,"int overflow in MPI function (%zu)",n);
@@ -483,17 +507,21 @@ void Accumulate(double * restrict vector UOIP,const size_t n UOIP,double * restr
 	MPI_Barrier(MPI_COMM_WORLD); // synchronize to get correct timing
 #endif
 	tstart=GET_TIME();
-	MPI_Reduce(vector,buf,n,MPI_DOUBLE,MPI_SUM,ADDA_ROOT,MPI_COMM_WORLD);
-	if (IFROOT) memcpy(vector,buf,n*sizeof(double));
+	mes_type=MPIVarType(type,true,&mult);
+	n*=mult;
+	// Strange, but MPI 2.2 doesn't seem to support calling the following the same way on all processes
+	if (IFROOT) MPI_Reduce(MPI_IN_PLACE,data,n,mes_type,MPI_SUM,ADDA_ROOT,MPI_COMM_WORLD);
+	else MPI_Reduce(data,NULL,n,mes_type,MPI_SUM,ADDA_ROOT,MPI_COMM_WORLD);
 	(*timing)=GET_TIME()-tstart;
 #endif
 }
 
 //======================================================================================================================
 
-void MyInnerProduct(void * restrict data UOIP,const var_type type UOIP,size_t n_elem UOIP,TIME_TYPE *timing UOIP)
+void MyInnerProduct(void * restrict data UOIP,const var_type type UOIP,size_t n UOIP,TIME_TYPE *timing UOIP)
 /* gather values stored in *data, add them and return them in *data; works for all types; increments 'timing' (if not
- * NULL) by the time used; not optimized for long data (allocates memory at every call)
+ * NULL) by the time used;
+ * Similar to Accumulate(), but returns the result to _all_ processors, and timing is _incremented_
  */
 {
 #ifdef ADDA_MPI
@@ -501,7 +529,7 @@ void MyInnerProduct(void * restrict data UOIP,const var_type type UOIP,size_t n_
 	int mult;
 	TIME_TYPE tstart=0; // redundant initialization to remove warnings
 
-	if (n_elem>INT_MAX) LogError(ONE_POS,"int overflow in MPI function (%zu)",n_elem);
+	if (n>INT_MAX) LogError(ONE_POS,"int overflow in MPI function (%zu)",n);
 	if (timing!=NULL) {
 #ifdef SYNCHRONIZE_TIMING
 		MPI_Barrier(MPI_COMM_WORLD); // synchronize to get correct timing
@@ -509,8 +537,8 @@ void MyInnerProduct(void * restrict data UOIP,const var_type type UOIP,size_t n_
 		tstart=GET_TIME();
 	}
 	mes_type=MPIVarType(type,true,&mult);
-	n_elem*=mult;
-	MPI_Allreduce(MPI_IN_PLACE,data,n_elem,mes_type,MPI_SUM,MPI_COMM_WORLD);
+	n*=mult;
+	MPI_Allreduce(MPI_IN_PLACE,data,n,mes_type,MPI_SUM,MPI_COMM_WORLD);
 	if (timing!=NULL) (*timing)+=GET_TIME()-tstart;
 #endif
 }
@@ -615,6 +643,7 @@ void ReadField(const char * restrict fname,doublecomplex *restrict field)
 	const int mustbe=6;
 	int scanned;
 	size_t i,j;
+	double buf[6];
 
 #if defined(ADDA_MPI) && defined(SYNCHRONIZE_TIMING)
 	MPI_Barrier(MPI_COMM_WORLD);  // synchronize to get correct timing
@@ -633,8 +662,10 @@ void ReadField(const char * restrict fname,doublecomplex *restrict field)
 				"dipoles (%zu) in the particle",fname,nvoid_Ndip);
 		}
 		else { // here local_nvoid_d0 <= i < local_nvoid_d1
-			scanned=sscanf(linebuf,format,&(field[j][RE]),&(field[j][IM]),&(field[j+1][RE]),&(field[j+1][IM]),
-				&(field[j+2][RE]),&(field[j+2][IM]));
+			scanned=sscanf(linebuf,format,buf,buf+1,buf+2,buf+3,buf+4,buf+5);
+			field[j] = buf[0] + I*buf[1];
+			field[j+1] = buf[2] + I*buf[3];
+			field[j+2] = buf[4] + I*buf[5];
 			if (scanned==EOF) {
 				/* in most cases EOF indicates blank line (which we just skip), but it can also be a short (ill-format)
 				 * line, for which we test below. Otherwise, such lines may be interpreted differently b different
@@ -723,10 +754,10 @@ void BlockTranspose(doublecomplex * restrict X UOIP,TIME_TYPE *timing UOIP)
 
 //======================================================================================================================
 
-void BlockTranspose_Dm(doublecomplex * restrict X UOIP,const size_t lengthY UOIP,const size_t lengthZ UOIP)
-/* do the data-transposition, i.e. exchange, between fftX and fftY&fftZ; specialized for D matrix. It can be updated to
- * accept timing argument for generality. But, since this is a specialized function, we keep the timing variable
- * hard-wired in the code.
+void BlockTranspose_DRm(doublecomplex * restrict X UOIP,const size_t lengthY UOIP,const size_t lengthZ UOIP)
+/* do the data-transposition, i.e. exchange, between fftX and fftY&fftZ; specialized for D or R matrix. It can be
+ * updated to accept timing argument for generality. But, since this is a specialized function, we keep the timing
+ * variable hard-wired in the code.
  */
 {
 #ifdef ADDA_MPI
@@ -804,7 +835,7 @@ void SetGranulComm(const double z0 UOIP,const double z1 UOIP,const double gdZ UO
 #ifdef PARALLEL
 	int i,loc0,loc1,loc1_prev=0;
 
-	MALLOC_VECTOR(gr_comm_buf,void,max_gran*sizeof(char),ALL);
+	MALLOC_VECTOR(gr_comm_buf,bool,max_gran,ALL);
 	if (!sm_gr) {
 		if (IFROOT) {
 			MALLOC_VECTOR(gr_comm_size,int,nprocs,ONE);
@@ -905,11 +936,9 @@ void FreeGranulComm(const int sm_gr UOIP)
 
 //======================================================================================================================
 
-void ExchangeFits(char * restrict data UOIP,const size_t n UOIP,TIME_TYPE *timing UOIP)
+void ExchangeFits(bool * restrict data UOIP,const size_t n UOIP,TIME_TYPE *timing UOIP)
 /* performs a collective AND operation on the (vector) data; timing is incremented by the total time used.
- * TODO: When MPI_C_BOOL data type will become widely supported, this function should be rewritten using bool input
- * data. However, this may be memory-inefficient if sizeof(MPI_BOOL)>1. This is currently discussed as an errata to
- * MPI 2.2.
+ * Starting from MPI 2.2 (with errata) MPI_C_BOOL should occupy 1 byte, the same when substitute is used
  */
 {
 #ifdef ADDA_MPI
@@ -920,8 +949,8 @@ void ExchangeFits(char * restrict data UOIP,const size_t n UOIP,TIME_TYPE *timin
 	MPI_Barrier(MPI_COMM_WORLD); // synchronize to get correct timing
 #endif
 	tstart=GET_TIME();
-	MPI_Allreduce(data,gr_comm_buf,n,MPI_SIGNED_CHAR,MPI_LAND,MPI_COMM_WORLD);
-	memcpy(data,gr_comm_buf,n*sizeof(char));
+	MPI_Allreduce(data,gr_comm_buf,n,mpi_bool,MPI_LAND,MPI_COMM_WORLD);
+	memcpy(data,gr_comm_buf,n*sizeof(bool));
 	(*timing)+=GET_TIME()-tstart;
 #endif
 }
@@ -950,7 +979,7 @@ bool ExchangePhaseShifts(doublecomplex * restrict bottom, doublecomplex * restri
 	// receive slice from previous processor and increment own slice by these values
 	if (ringid>0) { // It is important to use 0 instead of ROOT
 		MPI_Recv(bottom,2*boxXY,MPI_DOUBLE,ringid-1,0,MPI_COMM_WORLD,&status);
-		for (i=0;i<boxXY;i++) cAdd(top[i],bottom[i],top[i]);
+		for (i=0;i<boxXY;i++) top[i]+=bottom[i];
 	}
 	// send updated slice to previous processor
 	if (ringid<(nprocs-1)) MPI_Send(top,2*boxXY,MPI_DOUBLE,ringid+1,0,MPI_COMM_WORLD);
