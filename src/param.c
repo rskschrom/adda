@@ -1,18 +1,18 @@
-/* Initialization, parsing and handling of input parameters; also printout general information;
+/* Initialization, parsing and handling of input parameters; also print ut general information;
  * contains file locking routines
- *
- * Copyright (C) ADDA contributors
- * This file is part of ADDA.
- *
- * ADDA is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
- *
- * ADDA is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty
- * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along with ADDA. If not, see
- * <http://www.gnu.org/licenses/>.
- */
+*
+* Copyright (C) ADDA contributors
+* This file is part of ADDA.
+*
+* ADDA is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as
+* published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+*
+* ADDA is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty
+* of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+*
+* You should have received a copy of the GNU General Public License along with ADDA. If not, see
+* <http://www.gnu.org/licenses/>.
+*/
 #include "const.h" // keep this first
 #include "param.h" // corresponding header
 // project headers
@@ -2011,7 +2011,7 @@ void ParseParameters(const int argc,char **argv)
 		Narg=0;
 		while ((i+(++Narg))<argc && !IsOption(argv[i+Narg]));
 		Narg--;
-
+                printf("%s ", argv[i]);
 		argv[i]++; // shift to remove "-" in the beginning of the string
 		found=false;
 		opt.l1=opt.l2=UNDEF;
@@ -2032,8 +2032,13 @@ void ParseParameters(const int argc,char **argv)
 		argv[i]--; // shift back
 		i+=Narg;
 	}
+	// set all 'used' parameter options to false so that new job can run
+	for (j=0;j<LENGTH(options);j++) {
+		if (options[j].used){
+			options[j].used=false;
+		}
+	}
 }
-
 //======================================================================================================================
 
 void VariablesInterconnect(void)

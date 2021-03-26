@@ -255,6 +255,7 @@ void InitComm(int *argc_p UOIP,char ***argv_p UOIP)
 {
 #ifdef ADDA_MPI
 	int ver,subver;
+	int initialized;
 
 	/* MPI_Init may alter argc and argv and interfere with normal parsing of command line parameters. The way of
 	 * altering is implementation depending. MPI searches for MPI parameters in the command line and removes them (we
@@ -263,7 +264,14 @@ void InitComm(int *argc_p UOIP,char ***argv_p UOIP)
 	 * MPICH 1.2.5, for example, just replaces corresponding parameters by NULLs. To incorporate it we introduce special
 	 * function to restore the command line
 	 */
-	MPI_Init(argc_p,argv_p);
+
+	// rss 3/21 added following to allow for running set of calculations
+        MPI_Initialized(&initialized);
+        if (!initialized){
+            MPI_Init(&argc_p,&argv_p);
+        }
+	//MPI_Init(argc_p,argv_p);
+
 	tstart_main = GET_TIME(); // initialize program time
 	RecoverCommandLine(argc_p,argv_p);
 	// initialize ringid and nprocs
@@ -396,6 +404,7 @@ void NextCalc(const int code)
 // goes to next calculation in series
 {
 #ifdef ADDA_MPI
+	//printf("next calc %d %d\n", code, EXIT_SUCCESS);
 	if (code!=EXIT_SUCCESS) { // error occurred
 		fflush(stdout);
 		fprintf(stderr,"Aborting process %d\n",ringid);
@@ -404,9 +413,22 @@ void NextCalc(const int code)
 	}
 	else { // regular termination
 		// clean MPI constructs and some memory
-		MPI_Type_free(&mpi_dcomplex);
-		MPI_Type_free(&mpi_double3);
-		MPI_Type_free(&mpi_dcomplex3);
+		//#ifndef SUPPORT_MPI_COMPLEX
+		//printf("mpi_dcomplex\n");
+                //MPI_Type_free(&mpi_dcomplex);
+		//#endif
+		//printf("mpi_dcomplex\n");
+		//MPI_Type_free(&mpi_dcomplex);
+		//printf("mpi_double3\n");
+		//MPI_Type_free(&mpi_double3);
+		//printf("mpi_dcomplex3\n");
+		//MPI_Type_free(&mpi_dcomplex3);
+#ifndef SUPPORT_MPI_COMPLEX
+                MPI_Type_free(&mpi_dcomplex);
+#endif
+                MPI_Type_free(&mpi_int3);
+                MPI_Type_free(&mpi_double3);
+                MPI_Type_free(&mpi_dcomplex3);
 		if (displs_init) {
 			Free_general(recvcounts);
 			Free_general(displs);
