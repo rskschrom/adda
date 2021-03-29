@@ -122,7 +122,7 @@ static void InitMuellerIntegrFile(const int type,const char * restrict fname,FIL
 {
 	if (phi_int_type & type) {
 		SnprintfErr(ONE_POS,buf,buf_size,"%s/%s",directory,fname);
-		(*file)=FOpenErr(buf,"w",ONE_POS);
+		(*file)=FOpenErr(buf,"a",ONE_POS);
 		fprintf(*file,THETA_HEADER" "MUEL_HEADER" "RMSE_HEADER"\n");
 		if (mult!=NULL) MALLOC_VECTOR(*mult,double,angles.phi.N,ALL);
 	}
@@ -222,7 +222,7 @@ void MuellerMatrix(void)
 		if (yzplane) { // par=Y, per=X
 			if (store_ampl) {
 				SnprintfErr(ONE_POS,fname,MAX_FNAME,"%s/"F_AMPL,directory);
-				ampl=FOpenErr(fname,"w",ONE_POS);
+				ampl=FOpenErr(fname,"a",ONE_POS);
 				fprintf(ampl,THETA_HEADER" "AMPL_HEADER"\n");
 				for (i=0;i<nTheta;i++) {
 					theta=i*dtheta_deg;
@@ -233,7 +233,7 @@ void MuellerMatrix(void)
 			}
 			if (store_mueller) {
 				SnprintfErr(ONE_POS,fname,MAX_FNAME,"%s/"F_MUEL,directory);
-				mueller=FOpenErr(fname,"w",ONE_POS);
+				mueller=FOpenErr(fname,"a",ONE_POS);
 				fprintf(mueller,THETA_HEADER" "MUEL_HEADER"\n");
 				for (i=0;i<nTheta;i++) {
 					theta=i*dtheta_deg;
@@ -246,7 +246,7 @@ void MuellerMatrix(void)
 		if (scat_plane) { // par=X, per=-Y
 			if (store_ampl) {
 				SnprintfErr(ONE_POS,fname,MAX_FNAME,"%s/"F_AMPL,directory);
-				ampl=FOpenErr(fname,"w",ONE_POS);
+				ampl=FOpenErr(fname,"a",ONE_POS);
 				fprintf(ampl,THETA_HEADER" "AMPL_HEADER"\n");
 				for (i=0;i<nTheta;i++) {
 					theta=i*dtheta_deg;
@@ -257,7 +257,7 @@ void MuellerMatrix(void)
 			}
 			if (store_mueller) {
 				SnprintfErr(ONE_POS,fname,MAX_FNAME,"%s/"F_MUEL,directory);
-				mueller=FOpenErr(fname,"w",ONE_POS);
+				mueller=FOpenErr(fname,"a",ONE_POS);
 				fprintf(mueller,THETA_HEADER" "MUEL_HEADER"\n");
 				for (i=0;i<nTheta;i++) {
 					theta=i*dtheta_deg;
@@ -282,12 +282,12 @@ void MuellerMatrix(void)
 			if (store_scat_grid) {
 				if (store_ampl) {
 					SnprintfErr(ONE_POS,fname,MAX_FNAME,"%s/"F_AMPL_SG,directory);
-					ampl=FOpenErr(fname,"w",ONE_POS);
+					ampl=FOpenErr(fname,"a",ONE_POS);
 					fprintf(ampl,THETA_HEADER" "PHI_HEADER" "AMPL_HEADER"\n");
 				}
 				if (store_mueller) {
 					SnprintfErr(ONE_POS,fname,MAX_FNAME,"%s/"F_MUEL_SG,directory);
-					mueller=FOpenErr(fname,"w",ONE_POS);
+					mueller=FOpenErr(fname,"a",ONE_POS);
 					fprintf(mueller,THETA_HEADER" "PHI_HEADER" "MUEL_HEADER"\n");
 				}
 			}
@@ -650,7 +650,7 @@ static void StoreFields(const enum incpol which,doublecomplex * restrict cmplxF,
 #else
 	SnprintfErr(ALL_POS,fname,MAX_FNAME,"%s/%s",directory,fname_sh);
 #endif
-	file=FOpenErr(fname,"w",ALL_POS);
+	file=FOpenErr(fname,"a",ALL_POS);
 	// print head of file
 #ifdef PARALLEL
 	if (ringid==0) { // this condition can be different from being root
@@ -750,7 +750,7 @@ static void CalcIntegralScatQuantities(const enum incpol which)
 		if (beamtype==B_DIPOLE) Cdec=DecayCross(); // this is here to be run by all processors
 		if (IFROOT) {
 			SnprintfErr(ONE_POS,fname_cs,MAX_FNAME,"%s/"F_CS"%s",directory,f_suf);
-			CCfile=FOpenErr(fname_cs,"w",ONE_POS);
+			CCfile=FOpenErr(fname_cs,"a",ONE_POS);
 			if (calc_Cext) PrintBoth(CCfile,"Cext\t= "GFORM"\nQext\t= "GFORM"\n",Cext,Cext*inv_G);
 			if (calc_Cabs) PrintBoth(CCfile,"Cabs\t= "GFORM"\nQabs\t= "GFORM"\n",Cabs,Cabs*inv_G);
 			if (beamtype==B_DIPOLE) {
@@ -895,7 +895,7 @@ void SaveMuellerAndCS(double * restrict in)
 
 	if (store_mueller) { // save Mueller matrix
 		SnprintfErr(ONE_POS,fname,MAX_FNAME,"%s/"F_MUEL,directory);
-		mueller=FOpenErr(fname,"w",ONE_POS);
+		mueller=FOpenErr(fname,"a",ONE_POS);
 		fprintf(mueller,THETA_HEADER" "MUEL_HEADER"\n");
 		for (i=0;i<nTheta;i++) {
 			fprintf(mueller,ANGLE_FORMAT" "MUEL_FORMAT"\n",i*dtheta_deg,COMP16V(muel));
@@ -905,7 +905,7 @@ void SaveMuellerAndCS(double * restrict in)
 	}
 	// save cross sections
 	SnprintfErr(ONE_POS,fname,MAX_FNAME,"%s/"F_CS,directory);
-	CCfile=FOpenErr(fname,"w",ONE_POS);
+	CCfile=FOpenErr(fname,"a",ONE_POS);
 	PrintBoth(CCfile,"Cext\t= "GFORM"\nQext\t= "GFORM"\n",Cext,Cext*inv_G);
 	PrintBoth(CCfile,"Cabs\t= "GFORM"\nQabs\t= "GFORM"\n",Cabs,Cabs*inv_G);
 	FCloseErr(CCfile,F_CS,ONE_POS);
