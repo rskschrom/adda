@@ -95,7 +95,7 @@ int main(int argc_cl,char **argv_cl)
 			//printf("%d %s\n", i, array[i-1]);
         	}
 		narg = i;
-		printf("%d\n", narg);
+		//printf("%d\n", narg);
 
 		// get arguments for next calculation
 		char *argv_tmp[narg+2];
@@ -108,10 +108,6 @@ int main(int argc_cl,char **argv_cl)
 		for(j=1; j<narg+1; j++){
 			argv_tmp[j] = array[j-1];
 			//printf("%s ", argv[j]);
-		}
-
-		for(j=0; j<narg+1; j++){
-			printf("%s ", argv[j]);
 		}
 
 		// Initialize error handling and line wrapping
@@ -152,7 +148,7 @@ int main(int argc_cl,char **argv_cl)
 
 		// write calculation output completion to text file
 		MPI_Comm_rank(MPI_COMM_WORLD,&rank);
-		printf("rank: %d\n", rank);
+		//printf("rank: %d\n", rank);
 		if (rank==0){
 			// get output directory
 			for(j=1; j<=narg; j++){
